@@ -27,4 +27,3 @@ See `requirements.txt` (to be completed)
 
 ---
 
-For questions or suggestions, contact the course team.
