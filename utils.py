@@ -95,31 +95,53 @@ def load_mit_bih_record(record_path, record_name):
         print(f"Error loading record {record_name}: {e}")
         return None
 
-def load_all_mit_bih_records(record_path):
+def read_record_names(record_path, drop_paced=None):
     """
-    Load all MIT-BIH records from a directory.
-    
+    Read the list of record names from the MIT-BIH RECORDS file.
+
     Args:
         record_path: Path to the MIT-BIH database directory
-    
+        drop_paced: If True, paced records are excluded (default: config.DROP_PACED)
+
+    Returns:
+        List of record name strings
+    """
+    if drop_paced is None:
+        drop_paced = config.DROP_PACED
+
+    records_file = Path(record_path) / 'RECORDS'
+
+    if not records_file.exists():
+        raise FileNotFoundError(f"RECORDS file not found at {records_file}")
+
+    with open(records_file, 'r') as f:
+        record_names = [line.strip() for line in f.readlines() if line.strip()]
+
+    if drop_paced:
+        record_names = [r for r in record_names if r not in config.PACED_RECORDS]
+
+    return record_names
+
+def load_all_mit_bih_records(record_path, drop_paced=None):
+    """
+    Load all MIT-BIH records from a directory.
+
+    Args:
+        record_path: Path to the MIT-BIH database directory
+        drop_paced: If True, paced records are excluded (default: config.DROP_PACED)
+
     Returns:
         List of dictionaries with all records
     """
-    records_file = Path(record_path) / 'RECORDS'
-    
-    if not records_file.exists():
-        raise FileNotFoundError(f"RECORDS file not found at {records_file}")
-    
-    with open(records_file, 'r') as f:
-        record_names = [line.strip() for line in f.readlines()]
-    
+    record_names = read_record_names(record_path, drop_paced=drop_paced)
+
     records = []
     for record_name in record_names:
         print(f"Loading record {record_name}...")
         record = load_mit_bih_record(record_path, record_name)
         if record is not None:
             records.append(record)
-    
+
     return records
 
 def extract_ecg_features(signal, sampling_rate):

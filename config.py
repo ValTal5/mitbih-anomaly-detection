@@ -33,6 +33,16 @@ MIT_BIH_PATH = os.getenv(
     r"C:\Users\Admin\Downloads\mit-bih-arrhythmia-database-1.0.0",
 )
 
+# Paced records (pacemaker). Their beats have an artificial morphology driven
+# by the device, not by intrinsic cardiac activity, so they are excluded
+# following the De Chazal et al. (2004) standard.
+# Dropping them also removes the only records containing the '/' (paced) and
+# 'f' (fusion of paced and normal) beat symbols.
+PACED_RECORDS = {"102", "104", "107", "217"}
+
+# If True, paced records are skipped when loading the database.
+DROP_PACED = True
+
 # Data directories
 DATA_RAW_PATH = "data/raw"
 DATA_PROCESSED_PATH = "data/processed"

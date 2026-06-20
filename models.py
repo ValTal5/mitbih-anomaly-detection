@@ -2,9 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
+from ncps.torch import CfC
 from sklearn.decomposition import PCA
 from statsmodels.tsa.arima.model import ARIMA
 import warnings
@@ -252,97 +250,312 @@ class LSTMAutoencoderAnomalyDetector:
         return X_tensor
 
 
-class VAE(keras.Model):
+class VAETorch(nn.Module):
     """
-    Variational Autoencoder for ECG anomaly detection.
+    Small fully-connected Variational Autoencoder for ECG beats.
+
+    Input shape:  (batch, input_dim)
+    Output shape: (batch, input_dim)
+
+    The encoder maps a beat to a Gaussian latent distribution
+    (z_mean, z_log_var). The decoder reconstructs the beat from a sample of
+    that distribution. Beats are assumed to be normalized to [0, 1], so the
+    decoder ends with a sigmoid.
     """
-    
-    def __init__(self, input_shape, latent_dim=8):
-        super(VAE, self).__init__()
-        self.input_shape_val = input_shape
+
+    def __init__(self, input_dim=180, hidden_size=64, latent_dim=8):
+        super().__init__()
+        self.input_dim = input_dim
+        self.hidden_size = hidden_size
         self.latent_dim = latent_dim
-        
+
         # Encoder
-        self.encoder = keras.Sequential([
-            layers.Input(shape=input_shape),
-            layers.Conv1D(32, 3, strides=2, padding='same', activation='relu'),
-            layers.Conv1D(64, 3, strides=2, padding='same', activation='relu'),
-            layers.Flatten(),
-            layers.Dense(16, activation='relu'),
-        ])
-        
-        # Latent space
-        self.z_mean = layers.Dense(latent_dim, name='z_mean')
-        self.z_log_var = layers.Dense(latent_dim, name='z_log_var')
-        
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, hidden_size),
+            nn.ReLU(),
+        )
+        self.to_mean = nn.Linear(hidden_size, latent_dim)
+        self.to_log_var = nn.Linear(hidden_size, latent_dim)
+
         # Decoder
-        self.decoder = keras.Sequential([
-            layers.Input(shape=(latent_dim,)),
-            layers.Dense(16, activation='relu'),
-            layers.Reshape((4, 4)),
-            layers.Conv1DTranspose(64, 3, strides=2, padding='same', activation='relu'),
-            layers.Conv1DTranspose(32, 3, strides=2, padding='same', activation='relu'),
-            layers.Conv1D(1, 3, padding='same', activation='sigmoid'),
-            layers.Flatten(),
-        ])
-    
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, input_dim),
+            nn.Sigmoid(),
+        )
+
     def encode(self, x):
-        x = self.encoder(x)
-        z_mean = self.z_mean(x)
-        z_log_var = self.z_log_var(x)
-        return z_mean, z_log_var
-    
+        h = self.encoder(x)
+        return self.to_mean(h), self.to_log_var(h)
+
     def reparameterize(self, z_mean, z_log_var):
-        batch = tf.shape(z_mean)[0]
-        dim = tf.shape(z_mean)[1]
-        epsilon = tf.random.normal(shape=(batch, dim))
-        return z_mean + tf.exp(0.5 * z_log_var) * epsilon
-    
+        std = torch.exp(0.5 * z_log_var)
+        eps = torch.randn_like(std)
+        return z_mean + eps * std
+
     def decode(self, z):
         return self.decoder(z)
-    
-    def call(self, x):
+
+    def forward(self, x):
         z_mean, z_log_var = self.encode(x)
         z = self.reparameterize(z_mean, z_log_var)
         reconstructed = self.decode(z)
-        return reconstructed
-    
-    def vae_loss(self, x):
-        z_mean, z_log_var = self.encode(x)
-        z = self.reparameterize(z_mean, z_log_var)
-        reconstructed = self.decode(z)
-        
-        # Reconstruction loss
-        recon_loss = tf.reduce_mean(tf.square(x - reconstructed))
-        
-        # KL divergence
-        kl_loss = -0.5 * tf.reduce_mean(
-            tf.reduce_sum(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var), axis=1)
-        )
-        
-        return recon_loss + kl_loss
+        return reconstructed, z_mean, z_log_var
 
 
-class LiquidNeuralNetwork(keras.Model):  #Placeholder for Liquid Neural Network implementation
+class VAEAnomalyDetector:
     """
-    Liquid Neural Network (LNN) for ECG anomaly detection.
-    Uses continuous-time neural networks with liquid dynamics.
-    
-    Reference: Hasani et al., "Liquid Time-Constant Networks"
+    Reconstruction-based anomaly detector using a PyTorch VAE.
+
+    The VAE is fitted on normal beats by maximizing the evidence lower bound
+    (reconstruction term + beta * KL term). The anomaly score is the mean
+    squared reconstruction error, computed from the latent mean (no sampling)
+    for a stable, reproducible score. Using reconstruction error keeps this
+    detector comparable with the PCA and LSTM-autoencoder baselines.
     """
-    
-    def __init__(self, input_shape, hidden_size=32):
-        super(LiquidNeuralNetwork, self).__init__()
-        self.input_shape_val = input_shape
+
+    def __init__(
+        self,
+        input_dim=180,
+        hidden_size=64,
+        latent_dim=8,
+        beta=1.0,
+        threshold_percentile=95,
+        learning_rate=1e-3,
+        batch_size=32,
+        epochs=20,
+        device=None,
+        random_state=42,
+    ):
+        self.input_dim = input_dim
         self.hidden_size = hidden_size
-        
-        # Simplified LNN implementation
-        self.input_layer = layers.Input(shape=input_shape)
-        self.dense1 = layers.Dense(hidden_size, activation='tanh')
-        self.dense2 = layers.Dense(hidden_size, activation='tanh')
-        self.output_layer = layers.Dense(input_shape[1])
-    
-    def call(self, x):
-        h = self.dense1(x)
-        h = self.dense2(h)
-        return self.output_layer(h)
+        self.latent_dim = latent_dim
+        self.beta = beta
+        self.threshold_percentile = threshold_percentile
+        self.learning_rate = learning_rate
+        self.batch_size = batch_size
+        self.epochs = epochs
+        self.random_state = random_state
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = VAETorch(input_dim, hidden_size, latent_dim).to(self.device)
+        self.threshold = None
+        self.history = []
+
+    def fit(self, X_train):
+        """Train the VAE on normal beats and set the anomaly threshold."""
+        torch.manual_seed(self.random_state)
+
+        X_train = self._prepare_tensor(X_train)
+        dataset = TensorDataset(X_train)
+        loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+
+        self.model.train()
+        self.history = []
+
+        for _ in range(self.epochs):
+            epoch_losses = []
+
+            for (batch,) in loader:
+                batch = batch.to(self.device)
+                reconstructed, z_mean, z_log_var = self.model(batch)
+
+                # ELBO = reconstruction loss + beta * KL divergence (summed over
+                # features, averaged over the batch).
+                recon_loss = torch.mean(torch.sum((batch - reconstructed) ** 2, dim=1))
+                kl_loss = -0.5 * torch.mean(
+                    torch.sum(1 + z_log_var - z_mean ** 2 - torch.exp(z_log_var), dim=1)
+                )
+                loss = recon_loss + self.beta * kl_loss
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                epoch_losses.append(loss.item())
+
+            self.history.append(float(np.mean(epoch_losses)))
+
+        train_scores = self.anomaly_score(X_train)
+        self.threshold = np.percentile(train_scores, self.threshold_percentile)
+
+        return self
+
+    def predict(self, X_test):
+        """Predict anomalies (0 = normal, 1 = anomaly)."""
+        scores = self.anomaly_score(X_test)
+        return (scores > self.threshold).astype(int)
+
+    def anomaly_score(self, X):
+        """Return reconstruction error for each beat (latent mean, no sampling)."""
+        X_tensor = self._prepare_tensor(X).to(self.device)
+
+        self.model.eval()
+        scores = []
+
+        with torch.no_grad():
+            for start in range(0, len(X_tensor), self.batch_size):
+                batch = X_tensor[start:start + self.batch_size]
+                z_mean, _ = self.model.encode(batch)
+                reconstructed = self.model.decode(z_mean)
+                batch_scores = torch.mean((batch - reconstructed) ** 2, dim=1)
+                scores.extend(batch_scores.cpu().numpy())
+
+        return np.array(scores)
+
+    def _prepare_tensor(self, X):
+        if isinstance(X, torch.Tensor):
+            X_tensor = X.detach().float().cpu()
+        else:
+            X_tensor = torch.tensor(np.asarray(X), dtype=torch.float32)
+
+        if len(X_tensor.shape) == 3 and X_tensor.shape[-1] == 1:
+            X_tensor = X_tensor.squeeze(-1)
+        if len(X_tensor.shape) != 2:
+            raise ValueError("Expected X with shape (n_beats, input_dim) or (n_beats, input_dim, 1).")
+
+        return X_tensor
+
+
+class CfCAutoencoderTorch(nn.Module):
+    """
+    Liquid-network autoencoder for ECG beats, built on CfC cells.
+
+    CfC (Closed-form Continuous-time) cells are the closed-form variant of the
+    Liquid Time-Constant networks of Hasani et al. They keep the continuous-time
+    "liquid" dynamics (input-dependent time constants) but run as fast as a
+    standard RNN.
+
+    The architecture mirrors the LSTM autoencoder, with the LSTM cells replaced
+    by CfC cells. This makes the two models directly comparable.
+
+    Input shape:  (batch, sequence_length, 1)
+    Output shape: (batch, sequence_length, 1)
+    """
+
+    def __init__(self, seq_len=180, hidden_size=32, latent_dim=8):
+        super().__init__()
+        self.seq_len = seq_len
+        self.hidden_size = hidden_size
+        self.latent_dim = latent_dim
+
+        self.encoder = CfC(input_size=1, units=hidden_size, batch_first=True)
+        self.to_latent = nn.Linear(hidden_size, latent_dim)
+        self.from_latent = nn.Linear(latent_dim, hidden_size)
+        self.decoder = CfC(input_size=hidden_size, units=hidden_size, batch_first=True)
+        self.output_layer = nn.Linear(hidden_size, 1)
+
+    def forward(self, x):
+        encoded, _ = self.encoder(x)
+        summary = encoded[:, -1, :]
+        latent = self.to_latent(summary)
+        decoder_start = self.from_latent(latent)
+        decoder_input = decoder_start.unsqueeze(1).repeat(1, self.seq_len, 1)
+        decoded, _ = self.decoder(decoder_input)
+        return self.output_layer(decoded)
+
+
+class CfCAutoencoderAnomalyDetector:
+    """
+    Reconstruction-based anomaly detector using a CfC (liquid) autoencoder.
+
+    The detector is fitted on normal beats. The anomaly score is the mean
+    squared reconstruction error for each beat, which keeps it comparable with
+    the PCA, LSTM-autoencoder, and VAE detectors.
+    """
+
+    def __init__(
+        self,
+        seq_len=180,
+        hidden_size=32,
+        latent_dim=8,
+        threshold_percentile=95,
+        learning_rate=1e-3,
+        batch_size=32,
+        epochs=20,
+        device=None,
+        random_state=42,
+    ):
+        self.seq_len = seq_len
+        self.hidden_size = hidden_size
+        self.latent_dim = latent_dim
+        self.threshold_percentile = threshold_percentile
+        self.learning_rate = learning_rate
+        self.batch_size = batch_size
+        self.epochs = epochs
+        self.random_state = random_state
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = CfCAutoencoderTorch(seq_len, hidden_size, latent_dim).to(self.device)
+        self.threshold = None
+        self.history = []
+
+    def fit(self, X_train):
+        """Train the autoencoder and set the anomaly threshold."""
+        torch.manual_seed(self.random_state)
+
+        X_train = self._prepare_tensor(X_train)
+        dataset = TensorDataset(X_train)
+        loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        loss_fn = nn.MSELoss()
+
+        self.model.train()
+        self.history = []
+
+        for _ in range(self.epochs):
+            epoch_losses = []
+
+            for (batch,) in loader:
+                batch = batch.to(self.device)
+                reconstructed = self.model(batch)
+                loss = loss_fn(reconstructed, batch)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+                epoch_losses.append(loss.item())
+
+            self.history.append(float(np.mean(epoch_losses)))
+
+        train_scores = self.anomaly_score(X_train)
+        self.threshold = np.percentile(train_scores, self.threshold_percentile)
+
+        return self
+
+    def predict(self, X_test):
+        """Predict anomalies (0 = normal, 1 = anomaly)."""
+        scores = self.anomaly_score(X_test)
+        return (scores > self.threshold).astype(int)
+
+    def anomaly_score(self, X):
+        """Return reconstruction error for each beat."""
+        X_tensor = self._prepare_tensor(X).to(self.device)
+
+        self.model.eval()
+        scores = []
+
+        with torch.no_grad():
+            for start in range(0, len(X_tensor), self.batch_size):
+                batch = X_tensor[start:start + self.batch_size]
+                reconstructed = self.model(batch)
+                batch_scores = torch.mean((batch - reconstructed) ** 2, dim=(1, 2))
+                scores.extend(batch_scores.cpu().numpy())
+
+        return np.array(scores)
+
+    def _prepare_tensor(self, X):
+        if isinstance(X, torch.Tensor):
+            X_tensor = X.detach().float().cpu()
+        else:
+            X_tensor = torch.tensor(np.asarray(X), dtype=torch.float32)
+
+        if len(X_tensor.shape) == 2:
+            X_tensor = X_tensor.unsqueeze(-1)
+        if len(X_tensor.shape) != 3:
+            raise ValueError("Expected X with shape (n_beats, seq_len) or (n_beats, seq_len, 1).")
+
+        return X_tensor
