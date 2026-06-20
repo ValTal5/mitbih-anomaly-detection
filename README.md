@@ -60,16 +60,6 @@ These are not final results. They are used to validate the experimental workflow
 - `notebooks/03_pca_baseline.ipynb`: PCA reconstruction baseline experiment.
 - `notebooks/04_lstm_autoencoder.ipynb`: PyTorch LSTM Autoencoder experiment.
 
-## Notes for Presentation
-
-The main methodological choices to explain are:
-
-- why the beat is the unit of analysis;
-- why labels are assigned to whole beat windows;
-- why the split is performed by record;
-- why threshold choice changes the precision/recall trade-off;
-- why reconstruction error is a common score across PCA, LSTM Autoencoder, and VAE.
-
 ## Requirements
 
 See `requirements.txt`.
