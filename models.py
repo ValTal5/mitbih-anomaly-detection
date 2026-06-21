@@ -10,6 +10,17 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
+def _progress(loader, verbose, epoch, epochs):
+    """Wrap a DataLoader in a tqdm progress bar when verbose and tqdm is available."""
+    if not verbose:
+        return loader
+    try:
+        from tqdm.auto import tqdm
+        return tqdm(loader, desc=f"Epoch {epoch + 1}/{epochs}", leave=False)
+    except ImportError:
+        return loader
+
+
 class PCAReconstructionAnomalyDetector:
     """
     PCA reconstruction baseline for ECG anomaly detection.
@@ -183,8 +194,11 @@ class LSTMAutoencoderAnomalyDetector:
         self.threshold = None
         self.history = []
 
-    def fit(self, X_train):
-        """Train the autoencoder and set the anomaly threshold."""
+    def fit(self, X_train, verbose=False):
+        """Train the autoencoder and set the anomaly threshold.
+
+        Set verbose=True to show a per-epoch progress bar and loss.
+        """
         torch.manual_seed(self.random_state)
 
         X_train = self._prepare_tensor(X_train)
@@ -197,10 +211,10 @@ class LSTMAutoencoderAnomalyDetector:
         self.model.train()
         self.history = []
 
-        for _ in range(self.epochs):
+        for epoch in range(self.epochs):
             epoch_losses = []
 
-            for (batch,) in loader:
+            for (batch,) in _progress(loader, verbose, epoch, self.epochs):
                 batch = batch.to(self.device)
                 reconstructed = self.model(batch)
                 loss = loss_fn(reconstructed, batch)
@@ -211,7 +225,10 @@ class LSTMAutoencoderAnomalyDetector:
 
                 epoch_losses.append(loss.item())
 
-            self.history.append(float(np.mean(epoch_losses)))
+            mean_loss = float(np.mean(epoch_losses))
+            self.history.append(mean_loss)
+            if verbose:
+                print(f"Epoch {epoch + 1}/{self.epochs} - loss: {mean_loss:.4f}")
 
         train_scores = self.anomaly_score(X_train)
         self.threshold = np.percentile(train_scores, self.threshold_percentile)
@@ -345,8 +362,11 @@ class VAEAnomalyDetector:
         self.threshold = None
         self.history = []
 
-    def fit(self, X_train):
-        """Train the VAE on normal beats and set the anomaly threshold."""
+    def fit(self, X_train, verbose=False):
+        """Train the VAE on normal beats and set the anomaly threshold.
+
+        Set verbose=True to show a per-epoch progress bar and loss.
+        """
         torch.manual_seed(self.random_state)
 
         X_train = self._prepare_tensor(X_train)
@@ -358,10 +378,10 @@ class VAEAnomalyDetector:
         self.model.train()
         self.history = []
 
-        for _ in range(self.epochs):
+        for epoch in range(self.epochs):
             epoch_losses = []
 
-            for (batch,) in loader:
+            for (batch,) in _progress(loader, verbose, epoch, self.epochs):
                 batch = batch.to(self.device)
                 reconstructed, z_mean, z_log_var = self.model(batch)
 
@@ -379,7 +399,10 @@ class VAEAnomalyDetector:
 
                 epoch_losses.append(loss.item())
 
-            self.history.append(float(np.mean(epoch_losses)))
+            mean_loss = float(np.mean(epoch_losses))
+            self.history.append(mean_loss)
+            if verbose:
+                print(f"Epoch {epoch + 1}/{self.epochs} - loss: {mean_loss:.4f}")
 
         train_scores = self.anomaly_score(X_train)
         self.threshold = np.percentile(train_scores, self.threshold_percentile)
@@ -498,8 +521,11 @@ class CfCAutoencoderAnomalyDetector:
         self.threshold = None
         self.history = []
 
-    def fit(self, X_train):
-        """Train the autoencoder and set the anomaly threshold."""
+    def fit(self, X_train, verbose=False):
+        """Train the autoencoder and set the anomaly threshold.
+
+        Set verbose=True to show a per-epoch progress bar and loss.
+        """
         torch.manual_seed(self.random_state)
 
         X_train = self._prepare_tensor(X_train)
@@ -512,10 +538,10 @@ class CfCAutoencoderAnomalyDetector:
         self.model.train()
         self.history = []
 
-        for _ in range(self.epochs):
+        for epoch in range(self.epochs):
             epoch_losses = []
 
-            for (batch,) in loader:
+            for (batch,) in _progress(loader, verbose, epoch, self.epochs):
                 batch = batch.to(self.device)
                 reconstructed = self.model(batch)
                 loss = loss_fn(reconstructed, batch)
@@ -526,7 +552,10 @@ class CfCAutoencoderAnomalyDetector:
 
                 epoch_losses.append(loss.item())
 
-            self.history.append(float(np.mean(epoch_losses)))
+            mean_loss = float(np.mean(epoch_losses))
+            self.history.append(mean_loss)
+            if verbose:
+                print(f"Epoch {epoch + 1}/{self.epochs} - loss: {mean_loss:.4f}")
 
         train_scores = self.anomaly_score(X_train)
         self.threshold = np.percentile(train_scores, self.threshold_percentile)
