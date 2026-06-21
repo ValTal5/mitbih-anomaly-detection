@@ -388,6 +388,44 @@ def split_by_record(X, y, metadata, test_size=None, random_state=None):
         'test_records': sorted(test_records),
     }
 
+def split_by_record_lists(X, y, metadata, train_records, test_records):
+    """
+    Split a beat dataset using explicit lists of train and test record names.
+
+    Beats are assigned to train or test according to which record they belong to,
+    following a fixed inter-patient partition (e.g. the De Chazal DS1/DS2 split in
+    config.DE_CHAZAL_DS1 / DE_CHAZAL_DS2). Records not in either list are dropped.
+
+    This complements split_by_record, which assigns records to train/test at
+    random. Use this function when a reproducible, standard partition is needed.
+    """
+    if len(X) != len(y) or len(X) != len(metadata):
+        raise ValueError("X, y, and metadata must contain the same number of beats.")
+    if 'record' not in metadata.columns:
+        raise ValueError("metadata must contain a 'record' column.")
+
+    train_records = {str(r) for r in train_records}
+    test_records = {str(r) for r in test_records}
+
+    overlap = train_records & test_records
+    if overlap:
+        raise ValueError(f"Records appear in both train and test: {sorted(overlap)}")
+
+    record_col = metadata['record'].astype(str)
+    is_train = record_col.isin(train_records).to_numpy()
+    is_test = record_col.isin(test_records).to_numpy()
+
+    return {
+        'X_train': X[is_train],
+        'X_test': X[is_test],
+        'y_train': y[is_train],
+        'y_test': y[is_test],
+        'metadata_train': metadata.loc[is_train].reset_index(drop=True),
+        'metadata_test': metadata.loc[is_test].reset_index(drop=True),
+        'train_records': sorted(train_records),
+        'test_records': sorted(test_records),
+    }
+
 def evaluate_anomaly_detection(y_true, y_pred, scores=None):
     """
     Compute common metrics for binary anomaly detection.

@@ -43,6 +43,18 @@ PACED_RECORDS = {"102", "104", "107", "217"}
 # If True, paced records are skipped when loading the database.
 DROP_PACED = True
 
+# De Chazal et al. (2004) inter-patient split (paced records already excluded).
+# DS1 is used for training/validation, DS2 for testing. Keeping records disjoint
+# between the two sets avoids patient-level leakage.
+DE_CHAZAL_DS1 = [
+    "101", "106", "108", "109", "112", "114", "115", "116", "118", "119", "122",
+    "124", "201", "203", "205", "207", "208", "209", "215", "220", "223", "230",
+]
+DE_CHAZAL_DS2 = [
+    "100", "103", "105", "111", "113", "117", "121", "123", "200", "202", "210",
+    "212", "213", "214", "219", "221", "222", "228", "231", "232", "233", "234",
+]
+
 # Data directories
 DATA_RAW_PATH = "data/raw"
 DATA_PROCESSED_PATH = "data/processed"
