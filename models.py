@@ -114,6 +114,12 @@ class LSTMAutoencoderTorch(nn.Module):
     """
     Small PyTorch LSTM autoencoder for ECG beat reconstruction.
 
+    The encoder is an LSTM that compresses the beat into a latent vector. The
+    decoder is a dense (fully-connected) head that reconstructs the whole beat
+    from that latent vector. A recurrent decoder fed a repeated constant tends to
+    collapse to a flat output, so a dense decoder is used instead (same approach
+    as the VAE). Beats are normalized to [0, 1], hence the final sigmoid.
+
     Input shape: (batch, sequence_length, 1)
     Output shape: (batch, sequence_length, 1)
     """
@@ -130,21 +136,18 @@ class LSTMAutoencoderTorch(nn.Module):
             batch_first=True,
         )
         self.to_latent = nn.Linear(hidden_size, latent_dim)
-        self.from_latent = nn.Linear(latent_dim, hidden_size)
-        self.decoder_lstm = nn.LSTM(
-            input_size=hidden_size,
-            hidden_size=hidden_size,
-            batch_first=True,
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, seq_len),
+            nn.Sigmoid(),
         )
-        self.output_layer = nn.Linear(hidden_size, 1)
 
     def forward(self, x):
         _, (hidden, _) = self.encoder_lstm(x)
         latent = self.to_latent(hidden[-1])
-        decoder_start = self.from_latent(latent)
-        decoder_input = decoder_start.unsqueeze(1).repeat(1, self.seq_len, 1)
-        decoded, _ = self.decoder_lstm(decoder_input)
-        return self.output_layer(decoded)
+        decoded = self.decoder(latent)
+        return decoded.unsqueeze(-1)
 
 
 class LSTMAutoencoderAnomalyDetector:
@@ -428,8 +431,11 @@ class CfCAutoencoderTorch(nn.Module):
     "liquid" dynamics (input-dependent time constants) but run as fast as a
     standard RNN.
 
-    The architecture mirrors the LSTM autoencoder, with the LSTM cells replaced
-    by CfC cells. This makes the two models directly comparable.
+    The CfC cell is used as the recurrent encoder; the decoder is a dense head
+    that reconstructs the whole beat from the latent vector (same design as the
+    LSTM autoencoder and the VAE). This keeps the LSTM-vs-CfC comparison on the
+    encoder cell, while avoiding the flat-output collapse of a recurrent decoder
+    fed a repeated constant. Beats are normalized to [0, 1], hence the sigmoid.
 
     Input shape:  (batch, sequence_length, 1)
     Output shape: (batch, sequence_length, 1)
@@ -443,18 +449,19 @@ class CfCAutoencoderTorch(nn.Module):
 
         self.encoder = CfC(input_size=1, units=hidden_size, batch_first=True)
         self.to_latent = nn.Linear(hidden_size, latent_dim)
-        self.from_latent = nn.Linear(latent_dim, hidden_size)
-        self.decoder = CfC(input_size=hidden_size, units=hidden_size, batch_first=True)
-        self.output_layer = nn.Linear(hidden_size, 1)
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, seq_len),
+            nn.Sigmoid(),
+        )
 
     def forward(self, x):
         encoded, _ = self.encoder(x)
         summary = encoded[:, -1, :]
         latent = self.to_latent(summary)
-        decoder_start = self.from_latent(latent)
-        decoder_input = decoder_start.unsqueeze(1).repeat(1, self.seq_len, 1)
-        decoded, _ = self.decoder(decoder_input)
-        return self.output_layer(decoded)
+        decoded = self.decoder(latent)
+        return decoded.unsqueeze(-1)
 
 
 class CfCAutoencoderAnomalyDetector:
