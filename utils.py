@@ -1,4 +1,3 @@
-import os
 import numpy as np
 import pandas as pd
 import wfdb
@@ -15,72 +14,40 @@ from sklearn.metrics import (
 
 import config
 
-# Utility functions for ECG data preprocessing and visualization
+# Utility functions for ECG data loading, beat segmentation, and evaluation.
 
-# MIT-BIH beat annotations.
-# Normal symbols follow the common AAMI grouping used in many ECG studies.
+# MIT-BIH beat annotation symbols.
+# Normal symbols follow the AAMI class N grouping (normal, LBBB, RBBB, atrial
+# escape, nodal/junctional escape); every other beat symbol is treated as an
+# anomaly.
 MIT_BIH_BEAT_SYMBOLS = {
     "N", "L", "R", "B", "A", "a", "J", "S", "V", "r",
     "F", "e", "j", "n", "E", "/", "f", "Q", "?"
 }
 MIT_BIH_NORMAL_SYMBOLS = {"N", "L", "R", "e", "j"}
 
-def load_ecg_data(path):
-    """
-    Load ECG data from a CSV file or directory.
-    Returns a pandas DataFrame.
-    """
-    if os.path.isdir(path):
-        # Load all CSV files in the directory and concatenate
-        dfs = []
-        for file in os.listdir(path):
-            if file.endswith('.csv'):
-                dfs.append(pd.read_csv(os.path.join(path, file)))
-        if dfs:
-            return pd.concat(dfs, ignore_index=True)
-        else:
-            raise FileNotFoundError("No CSV files found in the directory.")
-    elif os.path.isfile(path):
-        return pd.read_csv(path)
-    else:
-        raise FileNotFoundError(f"Invalid path: {path}")
 
 def normalize_signal(signal):
-    """
-    Normalize an ECG signal between 0 and 1.
-    """
+    """Min-max normalize an ECG signal to the [0, 1] range."""
     signal = np.asarray(signal)
     return (signal - np.min(signal)) / (np.max(signal) - np.min(signal) + 1e-8)
 
-def plot_ecg(signal, title="ECG Signal", figsize=(12, 4)):
-    """
-    Plot an ECG signal using matplotlib.
-    """
-    import matplotlib.pyplot as plt
-    plt.figure(figsize=figsize)
-    plt.plot(signal, lw=1)
-    plt.title(title)
-    plt.xlabel("Samples")
-    plt.ylabel("Amplitude")
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
 
 def load_mit_bih_record(record_path, record_name):
     """
     Load a single MIT-BIH record (signal and annotations).
-    
+
     Args:
         record_path: Path to the MIT-BIH database directory
         record_name: Record number as string (e.g., '100', '101')
-    
+
     Returns:
-        Dictionary with signal, annotations, and metadata
+        Dictionary with signal, annotations, and metadata (or None on error).
     """
     try:
         signal, fields = wfdb.rdsamp(str(Path(record_path) / record_name))
         annotation = wfdb.rdann(str(Path(record_path) / record_name), 'atr')
-        
+
         return {
             'record': record_name,
             'signal': signal,
@@ -94,6 +61,7 @@ def load_mit_bih_record(record_path, record_name):
     except Exception as e:
         print(f"Error loading record {record_name}: {e}")
         return None
+
 
 def read_record_names(record_path, drop_paced=None):
     """
@@ -122,6 +90,7 @@ def read_record_names(record_path, drop_paced=None):
 
     return record_names
 
+
 def load_all_mit_bih_records(record_path, drop_paced=None):
     """
     Load all MIT-BIH records from a directory.
@@ -144,88 +113,32 @@ def load_all_mit_bih_records(record_path, drop_paced=None):
 
     return records
 
-def extract_ecg_features(signal, sampling_rate):
-    """
-    Extract basic features from ECG signal.
-    
-    Args:
-        signal: ECG signal (1D array)
-        sampling_rate: Sampling rate in Hz
-    
-    Returns:
-        Dictionary with computed features
-    """
-    signal = np.asarray(signal)
-    
-    features = {
-        'mean': np.mean(signal),
-        'std': np.std(signal),
-        'min': np.min(signal),
-        'max': np.max(signal),
-        'rms': np.sqrt(np.mean(signal ** 2)),
-        'duration_sec': len(signal) / sampling_rate,
-    }
-    
-    return features
 
 def find_r_peaks(signal, fs=None):
     """
-    Detect R-peaks in ECG signal using peak detection.
-    
+    Detect R-peaks in an ECG signal using simple peak detection.
+
+    The model pipeline segments beats from the dataset's R-peak *annotations*
+    instead; this helper is kept for illustration (see notebook 01).
+
     Args:
         signal: ECG signal (1D array)
         fs: Sampling rate in Hz (default: config.FS)
-    
+
     Returns:
         Array of R-peak indices
     """
     if fs is None:
         fs = config.FS
-    
+
     signal = np.asarray(signal)
-    
-    # Find peaks with adaptive threshold
-    # Look for positive peaks, minimum distance between peaks (~0.4 seconds)
+
+    # Positive peaks, at least ~0.4 s apart, above 30% of the signal maximum.
     min_distance = int(0.4 * fs)
     peaks, _ = find_peaks(signal, distance=min_distance, height=np.max(signal) * 0.3)
-    
+
     return peaks
 
-def segment_signal_by_beats(signal, r_peaks, fs=None, half_window=None):
-    """
-    Segment ECG signal into individual beats around R-peaks.
-    
-    Args:
-        signal: ECG signal (1D array)
-        r_peaks: Array of R-peak indices
-        fs: Sampling rate in Hz (default: config.FS)
-        half_window: Half-window size in samples (default: config.HALF_WINDOW)
-    
-    Returns:
-        List of beat segments, list of valid indices
-    """
-    if fs is None:
-        fs = config.FS
-    if half_window is None:
-        half_window = config.HALF_WINDOW
-    
-    signal = np.asarray(signal)
-    beats = []
-    valid_indices = []
-    
-    for i, r_peak in enumerate(r_peaks):
-        start = r_peak - half_window
-        end = r_peak + half_window
-        
-        # Skip if window goes out of bounds
-        if start < 0 or end > len(signal):
-            continue
-        
-        beat = signal[start:end]
-        beats.append(beat)
-        valid_indices.append(i)
-    
-    return beats, valid_indices
 
 def is_mit_bih_anomaly(symbol, normal_symbols=None):
     """
@@ -236,6 +149,7 @@ def is_mit_bih_anomaly(symbol, normal_symbols=None):
         normal_symbols = MIT_BIH_NORMAL_SYMBOLS
 
     return symbol not in normal_symbols
+
 
 def segment_record_by_annotations(record, channel=0, half_window=None, normalize=True):
     """
@@ -278,74 +192,30 @@ def segment_record_by_annotations(record, channel=0, half_window=None, normalize
 
     return pd.DataFrame(rows)
 
-def create_beat_dataset(records, fs=None, normalize=True, use_annotations=True):
+
+def create_beat_dataset(records, normalize=True):
     """
-    Create dataset of individual beats from MIT-BIH records.
-    
+    Create a dataset of individual beats from MIT-BIH records.
+
+    Each beat is segmented around its annotated R-peak
+    (see segment_record_by_annotations).
+
     Args:
-        records: List of record dictionaries
-        fs: Sampling rate in Hz (default: config.FS)
-        normalize: Whether to normalize beats
-        use_annotations: If True, use MIT-BIH annotation samples as beat centers.
-    
+        records: List of record dictionaries (from load_mit_bih_record).
+        normalize: Whether to min-max normalize each beat.
+
     Returns:
-        DataFrame with beats, labels, and metadata
+        DataFrame with one row per beat (beats, labels, metadata); empty if none.
     """
-    if fs is None:
-        fs = config.FS
-    
-    if use_annotations:
-        datasets = [
-            segment_record_by_annotations(record, normalize=normalize)
-            for record in records
-        ]
-        datasets = [df for df in datasets if not df.empty]
-        if not datasets:
-            return pd.DataFrame()
-        return pd.concat(datasets, ignore_index=True)
+    datasets = [
+        segment_record_by_annotations(record, normalize=normalize)
+        for record in records
+    ]
+    datasets = [df for df in datasets if not df.empty]
+    if not datasets:
+        return pd.DataFrame()
+    return pd.concat(datasets, ignore_index=True)
 
-    dataset = []
-    
-    for record in records:
-        signal = record['signal'][:, 0]  # First channel
-        
-        # Find R-peaks
-        r_peaks = find_r_peaks(signal, fs)
-        
-        # Segment into beats
-        beats, valid_indices = segment_signal_by_beats(signal, r_peaks, fs)
-        
-        anno_samples = np.asarray(record['anno_sample'])
-        anno_symbols = np.asarray(record['anno_symbol'])
-
-        for beat_idx, (beat, peak_idx) in enumerate(zip(beats, valid_indices)):
-            r_peak = r_peaks[peak_idx]
-
-            distances = np.abs(anno_samples - r_peak)
-            nearest_idx = int(np.argmin(distances))
-            nearest_symbol = anno_symbols[nearest_idx]
-
-            if distances[nearest_idx] >= config.HALF_WINDOW:
-                continue
-            if nearest_symbol not in MIT_BIH_BEAT_SYMBOLS:
-                continue
-
-            is_anomaly = is_mit_bih_anomaly(nearest_symbol)
-            
-            if normalize:
-                beat = normalize_signal(beat)
-            
-            dataset.append({
-                'record': record['record'],
-                'sample': int(r_peak),
-                'symbol': nearest_symbol,
-                'beat_index': beat_idx,
-                'signal': beat,
-                'label': int(is_anomaly),
-                'label_name': 'anomaly' if is_anomaly else 'normal',
-            })
-    
-    return pd.DataFrame(dataset)
 
 def split_by_record(X, y, metadata, test_size=None, random_state=None):
     """
@@ -388,6 +258,7 @@ def split_by_record(X, y, metadata, test_size=None, random_state=None):
         'test_records': sorted(test_records),
     }
 
+
 def split_by_record_lists(X, y, metadata, train_records, test_records):
     """
     Split a beat dataset using explicit lists of train and test record names.
@@ -425,6 +296,7 @@ def split_by_record_lists(X, y, metadata, train_records, test_records):
         'train_records': sorted(train_records),
         'test_records': sorted(test_records),
     }
+
 
 def evaluate_anomaly_detection(y_true, y_pred, scores=None):
     """
