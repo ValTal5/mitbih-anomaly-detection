@@ -34,7 +34,7 @@ class PCAReconstructionAnomalyDetector:
         self.threshold_percentile = threshold_percentile
         self.model = PCA(n_components=n_components, random_state=random_state)
         self.threshold = None
-    
+
     def fit(self, X_train):
         """Fit PCA and set the anomaly threshold from training errors."""
         X_train = self._flatten_if_needed(X_train)
@@ -44,12 +44,12 @@ class PCAReconstructionAnomalyDetector:
         self.threshold = np.percentile(train_scores, self.threshold_percentile)
 
         return self
-    
+
     def predict(self, X_test):
         """Predict anomalies (0 = normal, 1 = anomaly)."""
         scores = self.anomaly_score(X_test)
         return (scores > self.threshold).astype(int)
-    
+
     def anomaly_score(self, X_test):
         """Return reconstruction error for each beat."""
         X_test = self._flatten_if_needed(X_test)
@@ -72,21 +72,21 @@ class ARMAModel:
     reconstruction/prediction error of an ARIMA(p, 0, q) model fitted to
     that beat.
     """
-    
+
     def __init__(self, p=1, d=0, q=1, threshold_percentile=95):
         self.p = p
         self.d = d
         self.q = q
         self.threshold_percentile = threshold_percentile
         self.threshold = None
-        
+
     def fit(self, X_train):
         """Set the anomaly threshold from training beat errors."""
         train_scores = self.anomaly_score(X_train)
         self.threshold = np.percentile(train_scores, self.threshold_percentile)
-        
+
         return self
-    
+
     def predict(self, X_test):
         """Predict anomalies (0 = normal, 1 = anomaly)."""
         scores = self.anomaly_score(X_test)
