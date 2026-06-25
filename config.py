@@ -1,6 +1,10 @@
 """
-Configuration settings for ECG Anomaly Detection project.
-Contains constants for signal processing, segmentation, and model training.
+Configuration settings for the ECG Anomaly Detection project.
+
+Holds constants for signal processing, beat segmentation, the dataset, and the
+train/test split. Model hyperparameters (batch size, epochs, learning rate) are
+not kept here: they are passed explicitly in each notebook, because different
+experiments use different values.
 """
 
 import os
@@ -23,7 +27,7 @@ HALF_WINDOW = 90
 BEAT_LEN = 2 * HALF_WINDOW
 
 # ============================================================================
-# DATA PATHS
+# DATA
 # ============================================================================
 
 # Path to MIT-BIH database.
@@ -55,45 +59,22 @@ DE_CHAZAL_DS2 = [
     "212", "213", "214", "219", "221", "222", "228", "231", "232", "233", "234",
 ]
 
-# Data directories
-DATA_RAW_PATH = "data/raw"
-DATA_PROCESSED_PATH = "data/processed"
-
 # ============================================================================
-# MODEL TRAINING
+# EXPERIMENT
 # ============================================================================
 
-# Train/test split
-TRAIN_SPLIT = 0.8
+# Fraction of records assigned to the test set by the random `split_by_record`.
+# (The full-dataset experiments use the explicit De Chazal DS1/DS2 lists via
+# `split_by_record_lists` instead.)
 TEST_SPLIT = 0.2
-
-# Anomaly contamination rate
-CONTAMINATION_RATE = 0.1
 
 # Random seed for reproducibility
 RANDOM_SEED = 42
 
 # ============================================================================
-# ARIMA/ARMA PARAMETERS
+# ARMA BASELINE
 # ============================================================================
 
 ARIMA_P = 1
 ARIMA_D = 0
 ARIMA_Q = 1
-ARIMA_THRESHOLD_PERCENTILE = 95
-
-# ============================================================================
-# NEURAL NETWORK PARAMETERS
-# ============================================================================
-
-# Batch size
-BATCH_SIZE = 32
-
-# Epochs
-EPOCHS = 100
-
-# Learning rate
-LEARNING_RATE = 1e-3
-
-# Validation split
-VALIDATION_SPLIT = 0.2
